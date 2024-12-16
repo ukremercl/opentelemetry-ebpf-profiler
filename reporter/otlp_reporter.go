@@ -1,4 +1,5 @@
 // Copyright The OpenTelemetry Authors
+// Copyright The OpenTelemetry Authors
 // SPDX-License-Identifier: Apache-2.0
 
 package reporter // import "go.opentelemetry.io/ebpf-profiler/reporter"
@@ -6,7 +7,11 @@ package reporter // import "go.opentelemetry.io/ebpf-profiler/reporter"
 import (
 	"context"
 	"crypto/tls"
+	"fmt"
+	"google.golang.org/protobuf/proto"
 	"maps"
+	"os"
+	"slices"
 	"strconv"
 	"time"
 
@@ -177,7 +182,52 @@ func (r *OTLPReporter) reportOTLPProfile(ctx context.Context) error {
 		log.Debugf("Skip sending of OTLP profile with no samples")
 		return nil
 	}
-	req := pprofileotlp.NewExportRequestFromProfiles(profiles)
+	buildid := "val"
+	val_to_search := "9b761400914c38727058a701b2a3f8c714ab8937"
+	for _, attr := range profile.GetAttributeTable() {
+		if attr.Key == "process.executable.build_id.gnu" {
+			buildid = attr.Value.GetStringValue()
+			if buildid == val_to_search {
+				data, err := proto.Marshal(profile)
+				if err != nil {
+					return fmt.Errorf("failed to marshal profile: %w", err)
+				}
+				if err := os.WriteFile("profile.proto", data, 0644); err != nil {
+					return fmt.Errorf("failed to write profile to file: %w", err)
+				}
+			}
+		}
+	}
+
+	pc := []*profiles.ProfileContainer{{
+		ProfileId:         mkProfileID(),
+		StartTimeUnixNano: startTS,
+		EndTimeUnixNano:   endTS,
+		// Attributes - Optional element we do not use.
+		// DroppedAttributesCount - Optional element we do not use.
+		// OriginalPayloadFormat - Optional element we do not use.
+		// OriginalPayload - Optional element we do not use.
+		Profile: profile,
+	}}
+
+	scopeProfiles := []*profiles.ScopeProfiles{{
+		Profiles: pc,
+		Scope: &common.InstrumentationScope{
+			Name:    r.name,
+			Version: r.version,
+		},
+		// SchemaUrl - This element is not well-defined yet. Therefore, we skip it.
+	}}
+
+	resourceProfiles := []*profiles.ResourceProfiles{{
+		Resource:      r.getResource(),
+		ScopeProfiles: scopeProfiles,
+		// SchemaUrl - This element is not well-defined yet. Therefore, we skip it.
+	}}
+
+	req := otlpcollector.ExportProfilesServiceRequest{
+		ResourceProfiles: resourceProfiles,
+	}
 
 	reqCtx, ctxCancel := context.WithTimeout(ctx, r.pkgGRPCOperationTimeout)
 	defer ctxCancel()

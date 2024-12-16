@@ -8,7 +8,8 @@ use std::path::{Path, PathBuf};
 use symblib::objfile::{self, SymbolSource};
 use symblib::symbconv::RangeExtractor as _;
 use symblib::{dwarf, symbconv as sc, symbfile, VirtAddr};
-
+use symblib::{ symbconv};
+use std::fs::File;
 /// Extract ranges from an executable.
 ///
 /// This creates a [`symblib::symbconv::multi`] extractor with all supported
@@ -82,6 +83,22 @@ unsafe fn rangeextr_impl(
         "dyn-obj-sym",
         sc::obj::Extractor::new(&obj_reader, SymbolSource::Dynamic),
     );
+
+    let mut output_file = File::create("output.symbfile").unwrap();
+
+    // Extract ranges to symbfile
+    match extr.extract_to_symbfile(&mut output_file) {
+        Ok(Some(stats)) => {
+            println!("Extraction succeeded: {:?}", stats);
+        }
+        Ok(None) => {
+            println!("No ranges extracted.");
+        }
+        Err(e) => {
+            eprintln!("Extraction failed: {}", e);
+        }
+    }
+
 
     // Run the extractor with the user's callback.
     let result = extr.extract(&mut |rng| {
@@ -200,7 +217,9 @@ mod tests {
 
     #[test]
     fn rangeextr() {
-        let file = c"../symblib/testdata/inline";
+        // let file = c"../symblib/testdata/inline";
+        let file = c"/home/ubuntu/git/opentelemetry-ebpf-profiler/ebpf-profiler";
+
 
         extern "C" fn visitor(_: *mut c_void, rng: *const SymblibRange) -> StatusCode {
             assert_ne!(rng, ptr::null());

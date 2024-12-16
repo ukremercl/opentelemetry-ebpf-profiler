@@ -4,7 +4,7 @@
 package main
 
 /*
-#cgo LDFLAGS: ${SRCDIR}/../../../target/release/libsymblib_capi.a
+#cgo LDFLAGS: ${SRCDIR}/../../../target/debug/libsymblib_capi.a
 #cgo CFLAGS: -g -Wall
 #include "../c/symblib.h"
 #include <stdlib.h>

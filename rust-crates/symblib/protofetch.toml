@@ -1,0 +1,18 @@
+name = 'rust-crates'
+proto_out_dir = './target/proto/'
+
+[opentelemetry]
+url = 'github.com/open-telemetry/opentelemetry-proto'
+revision = 'v1.3.2'
+allow_policies = [
+
+    "opentelemetry/proto/collector/profiles/v1experimental/*",
+    "opentelemetry/proto/profiles/v1experimental/*",
+    "opentelemetry/proto/resource/v1/*",
+    "opentelemetry/proto/common/v1/*",
+]
+
+# Used by camouflage in docker-compose.yaml
+#[cx-api-permissions]
+#url = 'github.com/coralogix/cx-api-permissions'
+#revision = "v0.0.18"

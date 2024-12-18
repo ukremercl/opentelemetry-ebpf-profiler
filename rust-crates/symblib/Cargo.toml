@@ -26,3 +26,7 @@ zydis.workspace = true
 
 [build-dependencies]
 prost-build.workspace = true
+#
+#[[bin]]
+#name = "test_symbolizer"
+#path = "src/test_symbolizer.rs"

@@ -192,10 +192,21 @@ func (r *OTLPReporter) reportOTLPProfile(ctx context.Context) error {
 				if err != nil {
 					return fmt.Errorf("failed to marshal profile: %w", err)
 				}
-				if err := os.WriteFile("profile.proto", data, 0644); err != nil {
+
+				if err := os.WriteFile(fmt.Sprintf("profile_%d.proto", time.Now().Unix()), data, 0644); err != nil {
 					return fmt.Errorf("failed to write profile to file: %w", err)
 				}
 			}
+		}
+	}
+	for _, mapping := range profile.Mapping {
+		log.Infof("Mapping: %v", mapping)
+		if mapping.HasFilenames {
+			fmt.Printf("Filename: %s\n", mapping.Filename)
+			fmt.Printf("BuildId: %s\n", mapping.GetBuildId())
+			println(mapping.Filename)
+
+			println(mapping.GetBuildId())
 		}
 	}
 

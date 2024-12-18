@@ -85,7 +85,7 @@ unsafe fn rangeextr_impl(
     );
 
     let mut output_file = File::create("output.symbfile").unwrap();
-
+    println!("Output file path: {:?}", std::env::current_dir().unwrap().join("output.symbfile"));
     // Extract ranges to symbfile
     match extr.extract_to_symbfile(&mut output_file) {
         Ok(Some(stats)) => {
@@ -218,7 +218,7 @@ mod tests {
     #[test]
     fn rangeextr() {
         // let file = c"../symblib/testdata/inline";
-        let file = c"/home/ubuntu/git/opentelemetry-ebpf-profiler/ebpf-profiler";
+        let file = c"/home/ubuntu/git/opentelemetry-ebpf-profiler/rust-crates/test/hello";//c"/home/ubuntu/git/opentelemetry-ebpf-profiler/ebpf-profiler";
 
 
         extern "C" fn visitor(_: *mut c_void, rng: *const SymblibRange) -> StatusCode {

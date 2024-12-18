@@ -15,6 +15,7 @@ pub mod objfile;
 pub mod retpads;
 pub mod symbconv;
 pub mod symbfile;
+mod test_symbolizer;
 
 /// Type-erased error type.
 ///

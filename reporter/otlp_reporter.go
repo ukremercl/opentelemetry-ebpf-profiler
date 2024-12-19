@@ -1,5 +1,4 @@
 // Copyright The OpenTelemetry Authors
-// Copyright The OpenTelemetry Authors
 // SPDX-License-Identifier: Apache-2.0
 
 package reporter // import "go.opentelemetry.io/ebpf-profiler/reporter"
@@ -8,11 +7,10 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
-	"google.golang.org/protobuf/proto"
 	"maps"
 	"os"
-	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	lru "github.com/elastic/go-freelru"
@@ -182,64 +180,50 @@ func (r *OTLPReporter) reportOTLPProfile(ctx context.Context) error {
 		log.Debugf("Skip sending of OTLP profile with no samples")
 		return nil
 	}
-	buildid := "val"
-	val_to_search := "9b761400914c38727058a701b2a3f8c714ab8937"
-	for _, attr := range profile.GetAttributeTable() {
-		if attr.Key == "process.executable.build_id.gnu" {
-			buildid = attr.Value.GetStringValue()
-			if buildid == val_to_search {
-				data, err := proto.Marshal(profile)
-				if err != nil {
-					return fmt.Errorf("failed to marshal profile: %w", err)
+	req := pprofileotlp.NewExportRequestFromProfiles(profiles)
+
+	for i := 0; i < req.Profiles().ResourceProfiles().Len(); i++ {
+		res := profiles.ResourceProfiles().At(i)
+		for j := 0; j < res.ScopeProfiles().Len(); j++ {
+			pscop := res.ScopeProfiles().At(j)
+			for k := 0; k < pscop.Profiles().Len(); k++ {
+				profi := pscop.Profiles().At(k)
+				for mi := 0; mi < profi.MappingTable().Len(); mi++ {
+					mapping := profi.MappingTable().At(mi)
+					filename := profi.StringTable().At(int(mapping.FilenameStrindex()))
+					//gnuBuildID := profi.AttributeTable().At(mapping.AttributeIndices())//, "process.executable.build_id.gnu")
+					println(filename)
+					if strings.Contains(filename, "hello") {
+						println("found profile for hello world ukremer. Id is:")
+						//data, err := profi.profiorig.Marshal()
+						//data, err := proto.Marshal(profi.OriginalPayload())
+						//if err != nil {
+						//
+						//}
+						//if err := os.WriteFile(fmt.Sprintf("profile_%d.proto", time.Now().Unix()), data, 0644); err != nil {
+						//	return fmt.Errorf("failed to write profile to file: %w", err)
+						//}
+						data, err := req.MarshalProto()
+						if err != nil {
+							return fmt.Errorf("failed to write profile to file: %w", err)
+						}
+						if err := os.WriteFile(fmt.Sprintf("req_%d.proto", time.Now().Unix()), data, 0644); err != nil {
+							return fmt.Errorf("failed to write request to file: %w", err)
+						}
+
+						println(profi.ProfileID().String())
+					}
+					//attr := profi.AttributeTable().At(mapping.AttributeIndices())
+
+					//if mapping.HasFilenames() {
+					//	println("mapping fnam:{}")
+					//	println(mapping.FilenameStrindex())
+					//}
 				}
 
-				if err := os.WriteFile(fmt.Sprintf("profile_%d.proto", time.Now().Unix()), data, 0644); err != nil {
-					return fmt.Errorf("failed to write profile to file: %w", err)
-				}
 			}
 		}
 	}
-	for _, mapping := range profile.Mapping {
-		log.Infof("Mapping: %v", mapping)
-		if mapping.HasFilenames {
-			fmt.Printf("Filename: %s\n", mapping.Filename)
-			fmt.Printf("BuildId: %s\n", mapping.GetBuildId())
-			println(mapping.Filename)
-
-			println(mapping.GetBuildId())
-		}
-	}
-
-	pc := []*profiles.ProfileContainer{{
-		ProfileId:         mkProfileID(),
-		StartTimeUnixNano: startTS,
-		EndTimeUnixNano:   endTS,
-		// Attributes - Optional element we do not use.
-		// DroppedAttributesCount - Optional element we do not use.
-		// OriginalPayloadFormat - Optional element we do not use.
-		// OriginalPayload - Optional element we do not use.
-		Profile: profile,
-	}}
-
-	scopeProfiles := []*profiles.ScopeProfiles{{
-		Profiles: pc,
-		Scope: &common.InstrumentationScope{
-			Name:    r.name,
-			Version: r.version,
-		},
-		// SchemaUrl - This element is not well-defined yet. Therefore, we skip it.
-	}}
-
-	resourceProfiles := []*profiles.ResourceProfiles{{
-		Resource:      r.getResource(),
-		ScopeProfiles: scopeProfiles,
-		// SchemaUrl - This element is not well-defined yet. Therefore, we skip it.
-	}}
-
-	req := otlpcollector.ExportProfilesServiceRequest{
-		ResourceProfiles: resourceProfiles,
-	}
-
 	reqCtx, ctxCancel := context.WithTimeout(ctx, r.pkgGRPCOperationTimeout)
 	defer ctxCancel()
 	_, err := r.client.Export(reqCtx, req)

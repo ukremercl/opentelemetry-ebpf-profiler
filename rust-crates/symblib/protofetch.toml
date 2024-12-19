@@ -3,13 +3,14 @@ proto_out_dir = './target/proto/'
 
 [opentelemetry]
 url = 'github.com/open-telemetry/opentelemetry-proto'
-revision = 'v1.3.2'
+revision = 'v1.4.0'
 allow_policies = [
 
-    "opentelemetry/proto/collector/profiles/v1experimental/*",
-    "opentelemetry/proto/profiles/v1experimental/*",
+    "opentelemetry/proto/collector/profiles/v1development/*",
+    "opentelemetry/proto/profiles/v1development/*",
     "opentelemetry/proto/resource/v1/*",
     "opentelemetry/proto/common/v1/*",
+    "opentelemetry/proto/collector/profiles/v1development/*",
 ]
 
 # Used by camouflage in docker-compose.yaml

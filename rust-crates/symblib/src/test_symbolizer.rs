@@ -1,11 +1,5 @@
 #![allow(missing_docs)]
 
-use std::io::Cursor;
-
-
-// pub mod greeter {
-//     include!(concat!(env!("OUT_DIR"), "/greeter.rs"));
-// }
 #[allow(clippy::all, non_snake_case)]
 // Include compiled proto files, organizes the generated code into modules.
 pub mod opentelemetry {
@@ -59,6 +53,8 @@ pub mod opentelemetry {
 
 use std::collections::HashMap;
 use std::fs::File;
+use std::io;
+use std::io::Write;
 use std::ops::Index;
 use fallible_iterator::FallibleIterator;
 use prost::Message;
@@ -107,18 +103,20 @@ fn parse_symbfile(symbfile_path: &str) -> HashMap<u64, Record> {
 
     address_to_symbol
 }
-
+// 1780-2000, 2004-2044,2044-2144, 2076-2096,
 /// Parse the profile file.
 fn parse_profile(profile_path: &str) -> Profile {
-    let data = std::fs::read(profile_path).expect("Failed to read profile");
-    Profile::decode(&*data).expect("Failed to decode profile")
+    let data = std::fs::read(profile_path).expect(&format!("Failed to read profile: {}", profile_path));
+    Profile::decode(&*data).expect(&format!("Failed to decode profile: {}", profile_path))
 }
 fn parse_prequest(req_path: &str) ->ExportProfilesServiceRequest {
     let data = std::fs::read(req_path).expect("Failed to read equest");
-    ExportProfilesServiceRequest::decode(&*data).expect("Failed to decode profile")
+    ExportProfilesServiceRequest::decode(&*data).expect(&format!("Failed to decode profile: {}", req_path))
 }
-fn symbolize_request(req_path: &str, address_to_symbol: &HashMap<u64, Record>) {
-    let req_files = std::fs::read_dir(req_path).expect("failed to read request directory")
+fn symbolize_request(req_path: &str, symbfile_path: &str) {
+    let address_to_symbol = parse_symbfile(symbfile_path);
+
+    let req_files = std::fs::read_dir(req_path).expect(&format!("failed to read request directory {}",req_path))
         .filter_map(|entry| entry.ok())
         .filter(|entry|entry.path().is_file())
         .collect::<Vec<_>>();
@@ -130,7 +128,7 @@ fn symbolize_request(req_path: &str, address_to_symbol: &HashMap<u64, Record>) {
         for res in req.resource_profiles{
             for scop in res.scope_profiles{
                 for prof in scop.profiles{
-                    symbolize_profile(&prof, address_to_symbol);
+                    symbolize_profile(&prof, &address_to_symbol);
                 }
             }
         }
@@ -215,6 +213,7 @@ fn symbolize_profile(profile: &Profile, address_to_symbol: &HashMap<u64, Record>
             // Adjust the address using MappingTable
             if let Some(mapping) = profile.mapping_table.get(location.mapping_index.unwrap() as usize) {
                 address += mapping.memory_start;
+                address += mapping.file_offset;
                 let filename = profile.string_table.index(mapping.filename_strindex as usize);
                 println!("Filename: {:?}", filename);
             }
@@ -230,7 +229,12 @@ fn symbolize_profile(profile: &Profile, address_to_symbol: &HashMap<u64, Record>
                                  range.file,
                                  add
                         );
-                        break;
+                        let ln = range.line_number_for_va(address);
+                        eprintln!("Line number: {:?}", ln);
+                        println!("Sample ukremer found: {:?}", sample);
+                        // io::stdout().flush().unwrap();
+                        // io::stderr().flush().unwrap();
+                        // break;
                     }
                 }
             }
@@ -256,21 +260,32 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_symbolize_request() {
+    fn test_single_func_symbolize_request() {
         let symbfile_path = "/home/ubuntu/git/opentelemetry-ebpf-profiler/rust-crates/symblib-capi/output.symbfile";
-        let req_path = "/home/ubuntu/git/opentelemetry-ebpf-profiler/test_data/requests";
+        let req_path = "/home/ubuntu/git/opentelemetry-ebpf-profiler/rust-crates/test_data/requests";
         // Step 1: Parse the symbfile
-        let address_to_symbol = parse_symbfile(symbfile_path);
 
         // Step 2: Parse the profile
         // Step 2: Parse each profile in the profiles folder
-        symbolize_request(req_path, &address_to_symbol);
+        symbolize_request(req_path, symbfile_path);
     }
     #[test]
-
-    fn test_profiles() {
-        let symbfile_path = "/home/ubuntu/git/opentelemetry-ebpf-profiler/rust-crates/symblib-capi/output.symbfile";
+    fn test_file_with_multiple_funcs(){
+        let sym_path = "/home/ubuntu/git/opentelemetry-ebpf-profiler/rust-crates/symblib-capi/output_mul_inline.symbfile";
+        let req_folder = "/home/ubuntu/git/opentelemetry-ebpf-profiler/rust-crates/test_data/line_mul";
+        symbolize_request(req_folder, sym_path);
+    }
+    #[test]
+    fn test_file_with_single_func(){
+        let sym_path = "/home/ubuntu/git/opentelemetry-ebpf-profiler/rust-crates/symblib-capi/hello_with_functions.symbfile";
         let profiles_folder = "/home/ubuntu/git/opentelemetry-ebpf-profiler/profiles-proto";
+        test_profiles(sym_path, profiles_folder);
+    }
+
+
+    fn test_profiles(symbfile_path: &str, profiles_folder: &str) {
+        // let symbfile_path = "/home/ubuntu/git/opentelemetry-ebpf-profiler/rust-crates/symblib-capi/output.symbfile";
+        // let profiles_folder = "/home/ubuntu/git/opentelemetry-ebpf-profiler/profiles-proto";
 
         // Step 1: Parse the symbfile
         let address_to_symbol = parse_symbfile(symbfile_path);
@@ -289,6 +304,25 @@ mod tests {
     }
 
 
+
+    #[test]
+    fn test_parse_symbfile2(){
+        let parsed = parse_symbfile("/home/ubuntu/git/opentelemetry-ebpf-profiler/rust-crates/symblib-capi/output_mul_inline.symbfile");
+    }
+    #[test]
+    fn test_profile_symbolize() {
+        let symbfile_path = "/home/ubuntu/git/opentelemetry-ebpf-profiler/rust-crates/symblib-capi/output.symbfile";
+        let profile_path = "/home/ubuntu/git/opentelemetry-ebpf-profiler/profile.proto";
+
+        // Step 1: Parse the symbfile
+        let address_to_symbol = parse_symbfile(symbfile_path);
+
+        // Step 2: Parse the profile
+        let profile = parse_profile(profile_path);
+
+        // Step 3: Perform symbolization
+        symbolize_profile(&profile, &address_to_symbol);
+    }
     fn symbolize_profile_test(profile_path: &str, address_to_symbol: &HashMap<u64, Record>) {
         let symbfile_path = "/home/ubuntu/git/opentelemetry-ebpf-profiler/rust-crates/symblib-capi/output.symbfile";
         let profile_path = "/home/ubuntu/git/opentelemetry-ebpf-profiler/profile.proto";

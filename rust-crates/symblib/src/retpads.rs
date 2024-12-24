@@ -285,6 +285,10 @@ mod tests {
         records.sort_unstable_by_key(|x| x.elf_va);
         let mut record_iter = records.iter();
 
+        for rp in record_iter.clone() {
+            println!("ukremer next{:?}", rp);
+        }
+
         // Reference data created by scrolling through disassembly in IDA,
         // looking for any calls in functions with DWARF info.
 

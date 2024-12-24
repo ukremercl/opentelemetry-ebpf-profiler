@@ -54,8 +54,9 @@ pub mod opentelemetry {
 use std::collections::HashMap;
 use std::fs::File;
 use std::io;
-use std::io::Write;
+use std::io::{Seek, SeekFrom, Write};
 use std::ops::Index;
+use std::path::Path;
 use fallible_iterator::FallibleIterator;
 use prost::Message;
 use crate::symbfile::records::{Range, Record};
@@ -65,6 +66,9 @@ use crate::symbfile::proto::MessageType;
 use opentelemetry::proto::profiles::v1development::Profile;
 use opentelemetry::proto::collector::profiles::v1development::ExportProfilesServiceRequest;
 use opentelemetry::proto::profiles::v1development::Sample;
+use crate::retpads::create_retpad_symbfile;
+use crate::symbfile;
+use crate::symbfile::ReturnPad;
 use crate::test_symbolizer::opentelemetry::proto::common::v1::any_value;
 use crate::test_symbolizer::opentelemetry::proto::common::v1::any_value::Value;
 use crate::test_symbolizer::opentelemetry::proto::profiles::v1development::Mapping;
@@ -113,7 +117,32 @@ fn parse_prequest(req_path: &str) ->ExportProfilesServiceRequest {
     let data = std::fs::read(req_path).expect("Failed to read equest");
     ExportProfilesServiceRequest::decode(&*data).expect(&format!("Failed to decode profile: {}", req_path))
 }
-fn symbolize_request(req_path: &str, symbfile_path: &str) {
+
+fn get_return_pad_vec(exec_path: &str, range_symbfile: &str) -> Vec<ReturnPad> {
+    // let exec_path = testdata("inline-no-tco");
+    // let range_symbfile = File::open(testdata("inline-no-tco.ranges.symbfile")).unwrap();
+    let mut retpad_symbfile = tempfile::tempfile().unwrap();
+    let rng_file = File::open(range_symbfile).expect("Failed to open range symbfile");
+
+
+    create_retpad_symbfile(Path::new(&exec_path), rng_file, &mut retpad_symbfile).unwrap();
+    retpad_symbfile.seek(SeekFrom::Start(0)).unwrap();
+
+    let mut reader = symbfile::Reader::new(retpad_symbfile).unwrap();
+
+    // The message order in return pad symbfiles is undefined: read all and sort.
+    let mut records = Vec::<symbfile::ReturnPad>::new();
+    while let Some(msg) = reader.read().unwrap() {
+        records.push(match msg {
+            symbfile::Record::ReturnPad(pad) => pad,
+            _ => panic!("unexpected record type"),
+        });
+    }
+    records.sort_unstable_by_key(|x| x.elf_va);
+    records
+}
+
+fn symbolize_request(req_path: &str, symbfile_path: &str, pads_option : Option<&Vec<ReturnPad>>, pid_filter: ::std::option::Option<i64>) {
     let address_to_symbol = parse_symbfile(symbfile_path);
 
     let req_files = std::fs::read_dir(req_path).expect(&format!("failed to read request directory {}",req_path))
@@ -128,7 +157,7 @@ fn symbolize_request(req_path: &str, symbfile_path: &str) {
         for res in req.resource_profiles{
             for scop in res.scope_profiles{
                 for prof in scop.profiles{
-                    symbolize_profile(&prof, &address_to_symbol);
+                    symbolize_profile(&prof, &address_to_symbol, pads_option, pid_filter);
                 }
             }
         }
@@ -139,7 +168,7 @@ fn symbolize_request(req_path: &str, symbfile_path: &str) {
 
 /// Perform symbolization of the profile using the address-to-symbol mapping.
 // Perform symbolization of the profile using the address-to-symbol mapping.
-fn symbolize_profile(profile: &Profile, address_to_symbol: &HashMap<u64, Record>) {
+fn symbolize_profile(profile: &Profile, address_to_symbol: &HashMap<u64, Record>, pads_option: Option<&Vec<ReturnPad>>, pid_filter: ::std::option::Option<i64>) {
     // for x in &profile.mapping_table{
     //     // if (x.has_filenames) {
     //     //     println!("Filename: {:?}", (x.filename));
@@ -164,13 +193,29 @@ fn symbolize_profile(profile: &Profile, address_to_symbol: &HashMap<u64, Record>
 
     for sample in &profile.sample{
         //println!("Sample: {:?}", sample);
-        //find the mapping for the sample
+        //find the mapping for the sample size=11
 
         let attributes: Vec<_> = sample.attribute_indices.iter()
             .filter_map(|&index| profile.attribute_table.get(index as usize))
             .collect();
+        let mut pid = 0;
+        let mut executable_path = "";
         for attr in &attributes {
             println!("Attributes ukremer: {:?}", attr);
+            if attr.key == "process.pid" && pid_filter.is_some() {
+                if let Some(any_value) = &attr.value {
+                    match &any_value.value {
+                        Some(Value::IntValue(val)) => {
+                            pid = *val;
+                            println!("PID: {}", pid);
+                            println!("thread name: {:?}", attr.key);
+
+                        }
+                        _ => {}
+                    }
+                }
+            }
+
             if (attr.key == "process.executable.path") {
                 if let Some(any_value) = &attr.value {
                     match &any_value.value {
@@ -180,12 +225,18 @@ fn symbolize_profile(profile: &Profile, address_to_symbol: &HashMap<u64, Record>
                             if val.contains("hello") {
                                 println!("found profile for hello world ukremer. Id is:")
                             }
+                            executable_path = val;
                         }
                         _ => {}
                     }
                 }
             }
         }
+        if pid_filter.is_some() && pid != pid_filter.unwrap() {
+            continue;
+        }
+        println!("PID: {}", pid);
+        println!("Executable path: {}", executable_path);
 
         // let indices: Vec<usize> = sample.attribute_indices.iter().map(|&i| i as usize).collect();
         // let attributes: Vec<_> = indices
@@ -206,16 +257,24 @@ fn symbolize_profile(profile: &Profile, address_to_symbol: &HashMap<u64, Record>
             .location_table
             .get(start_index..start_index + length)
             .unwrap_or(&[]);
+
         //
         // Process each location in the resolved slice
         for location in locations {
             let mut address = location.address;
             // Adjust the address using MappingTable
+            let mut filename = "";
             if let Some(mapping) = profile.mapping_table.get(location.mapping_index.unwrap() as usize) {
                 address += mapping.memory_start;
                 address += mapping.file_offset;
-                let filename = profile.string_table.index(mapping.filename_strindex as usize);
+                filename = profile.string_table.index(mapping.filename_strindex as usize);
                 println!("Filename: {:?}", filename);
+            }else {
+                continue;
+            }
+            if (address < 4000)
+            {
+                println!("CHecking address: {:?}", address);
             }
 
             for (start, record) in address_to_symbol.iter() {
@@ -229,8 +288,39 @@ fn symbolize_profile(profile: &Profile, address_to_symbol: &HashMap<u64, Record>
                                  range.file,
                                  add
                         );
+                        // if let Some(line_number) = range.line_number_for_va(address) {
+                        //     println!(
+                        //         "Address: 0x{:x}, Function: {}, File: {:?}, Line: {}",
+                        //         address, range.func, range.file, line_number
+                        //     );
+                        // }
+
+
                         let ln = range.line_number_for_va(address);
                         eprintln!("Line number: {:?}", ln);
+                        println!("Sample ukremer found: {:?}", sample);
+                        // io::stdout().flush().unwrap();
+                        // io::stderr().flush().unwrap();
+                        // break;
+                    }
+                }
+            }
+            if (address == 2091 || address == 2127){
+                println!("found address of foo!!!");
+            }
+            if let Some(pads) = pads_option{
+                for pad in pads{
+                    let pp = &pad;
+                    println!("pp: {:?}", pp);
+                    if address == pad.elf_va{
+                        println!("found pad for address{}",address);
+                        for x in pad.entries.iter() {
+                            let f = &x.func;
+                            println!("Func: {:?}", f);
+                            let n = &x;
+                            println!("Pad: {:?}", n);
+
+                        }
                         println!("Sample ukremer found: {:?}", sample);
                         // io::stdout().flush().unwrap();
                         // io::stderr().flush().unwrap();
@@ -267,14 +357,9 @@ mod tests {
 
         // Step 2: Parse the profile
         // Step 2: Parse each profile in the profiles folder
-        symbolize_request(req_path, symbfile_path);
+        symbolize_request(req_path, symbfile_path, None, None);
     }
-    #[test]
-    fn test_file_with_multiple_funcs(){
-        let sym_path = "/home/ubuntu/git/opentelemetry-ebpf-profiler/rust-crates/symblib-capi/output_mul_inline.symbfile";
-        let req_folder = "/home/ubuntu/git/opentelemetry-ebpf-profiler/rust-crates/test_data/line_mul";
-        symbolize_request(req_folder, sym_path);
-    }
+
     #[test]
     fn test_file_with_single_func(){
         let sym_path = "/home/ubuntu/git/opentelemetry-ebpf-profiler/rust-crates/symblib-capi/hello_with_functions.symbfile";
@@ -321,7 +406,7 @@ mod tests {
         let profile = parse_profile(profile_path);
 
         // Step 3: Perform symbolization
-        symbolize_profile(&profile, &address_to_symbol);
+        symbolize_profile(&profile, &address_to_symbol, None, None);
     }
     fn symbolize_profile_test(profile_path: &str, address_to_symbol: &HashMap<u64, Record>) {
         let symbfile_path = "/home/ubuntu/git/opentelemetry-ebpf-profiler/rust-crates/symblib-capi/output.symbfile";
@@ -335,6 +420,36 @@ mod tests {
         let profile = parse_profile(profile_path);
 
         // Step 3: Perform symbolization
-        symbolize_profile(&profile, &address_to_symbol);
+        symbolize_profile(&profile, &address_to_symbol, None, None);
+    }
+
+    #[test]
+    fn test_file_with_multiple_funcs(){
+        let sym_path = "/home/ubuntu/git/opentelemetry-ebpf-profiler/rust-crates/symblib-capi/output_mul_only_inline.symbfile";//"/home/ubuntu/git/opentelemetry-ebpf-profiler/rust-crates/symblib-capi/output_mul_inline.symbfile";
+        let req_folder = "/home/ubuntu/git/opentelemetry-ebpf-profiler/rust-crates/test_data/req3-single-inl";//"/home/ubuntu/git/opentelemetry-ebpf-profiler/rust-crates/test_data/req2";
+        let rec_vec =
+            get_return_pad_vec("/home/ubuntu/git/opentelemetry-ebpf-profiler/rust-crates/test/hello_mul_only_inline",
+                               "/home/ubuntu/git/opentelemetry-ebpf-profiler/rust-crates/symblib-capi/output_mul_only_inline.symbfile",
+            );
+        symbolize_request(req_folder, sym_path, Some(&rec_vec), Some(1177588));
+    }
+
+    #[test]
+    fn test_parse_pads(){
+        let rec_vec =
+            get_return_pad_vec("/home/ubuntu/git/opentelemetry-ebpf-profiler/rust-crates/test/hello_mul_only_inline",
+            "/home/ubuntu/git/opentelemetry-ebpf-profiler/rust-crates/symblib-capi/output_mul_only_inline.symbfile",
+        );
+        for x in rec_vec{
+            println!("{:?}", x);
+        }
+
+        // ReturnPad { elf_va: 1775, entries: [ReturnPadEntry { func: "_start", file: None, line: None }] }
+        // ReturnPad { elf_va: 1779, entries: [ReturnPadEntry { func: "_start", file: None, line: None }] }
+        // ReturnPad { elf_va: 2031, entries: [ReturnPadEntry { func: "print_hello_world", file: Some("/home/ubuntu/git/opentelemetry-ebpf-profiler/rust-crates/test/hello.c"), line: Some(4) }] }
+        // ReturnPad { elf_va: 2083, entries: [ReturnPadEntry { func: "main", file: Some("/home/ubuntu/git/opentelemetry-ebpf-profiler/rust-crates/test/hello.c"), line: Some(13) }, ReturnPadEntry { func: "foo", file: Some("/home/ubuntu/git/opentelemetry-ebpf-profiler/rust-crates/test/hello.c"), line: Some(7) }] }
+        // ReturnPad { elf_va: 2095, entries: [ReturnPadEntry { func: "main", file: Some("/home/ubuntu/git/opentelemetry-ebpf-profiler/rust-crates/test/hello.c"), line: Some(15) }] }
+        // ReturnPad { elf_va: 2119, entries: [ReturnPadEntry { func: "main", file: Some("/home/ubuntu/git/opentelemetry-ebpf-profiler/rust-crates/test/hello.c"), line: Some(16) }, ReturnPadEntry { func: "foo", file: Some("/home/ubuntu/git/opentelemetry-ebpf-profiler/rust-crates/test/hello.c"), line: Some(7) }] }
+        // ReturnPad { elf_va: 2131, entries: [ReturnPadEntry { func: "main", file: Some("/home/ubuntu/git/opentelemetry-ebpf-profiler/rust-crates/test/hello.c"), line: Some(17) }] }
     }
 }

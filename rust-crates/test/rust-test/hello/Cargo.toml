@@ -1,0 +1,9 @@
+[package]
+name = "hello"
+edition = "2021"
+version.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+libc = "0.2.169"
+num = "0.4"

@@ -269,6 +269,10 @@ fn symbolize_profile(profile: &Profile, address_to_symbol: &HashMap<u64, Record>
                 address += mapping.file_offset;
                 filename = profile.string_table.index(mapping.filename_strindex as usize);
                 println!("Filename: {:?}", filename);
+                if (filename=="libc.so.6"){
+                    println!("found libc.so.6");
+
+                }
             }else {
                 continue;
             }
@@ -433,6 +437,30 @@ mod tests {
             );
         symbolize_request(req_folder, sym_path, Some(&rec_vec), Some(1177588));
     }
+    #[test]
+    fn test_file_with_extern_libs(){
+        let sym_path = "/home/ubuntu/git/opentelemetry-ebpf-profiler/rust-crates/test_data/req_with_lib/hello_with_libs.symbfile";
+
+        let req_folder = "/home/ubuntu/git/opentelemetry-ebpf-profiler/rust-crates/test_data/req_with_lib/reqs/";//"/home/ubuntu/git/opentelemetry-ebpf-profiler/rust-crates/test_data/req2";
+        let rec_vec =
+            get_return_pad_vec("/home/ubuntu/git/opentelemetry-ebpf-profiler/rust-crates/test/hello_with_libs",
+                               sym_path,
+            );
+        symbolize_request(req_folder, sym_path, Some(&rec_vec), None);
+    }
+
+    #[test]
+    fn test_file_with_extern_libs_only_lib(){
+        let sym_path = "/home/ubuntu/git/opentelemetry-ebpf-profiler/rust-crates/test_data/req_with_lib/libcrypto2.symbfile";
+
+        let req_folder = "/home/ubuntu/git/opentelemetry-ebpf-profiler/rust-crates/test_data/req_with_lib/reqs/";//"/home/ubuntu/git/opentelemetry-ebpf-profiler/rust-crates/test_data/req2";
+        let rec_vec =
+            get_return_pad_vec("/home/ubuntu/.cache/debuginfod_client/e1ccd314d3d3e596c8d9b70001c917e9c5292c33/debuginfo",
+                               sym_path,
+            );
+        symbolize_request(req_folder, sym_path, Some(&rec_vec), None);
+    }
+
 
     #[test]
     fn test_parse_pads(){

@@ -107,6 +107,28 @@ fn parse_symbfile(symbfile_path: &str) -> HashMap<u64, Record> {
 
     address_to_symbol
 }
+fn parse_symbfile_to_vec(symbfile_path_vec: Vec<&str>) -> Vec<Record> {
+    let mut range_recs = Vec::<Record>::new();
+    symbfile_path_vec.iter().for_each(|symbfile_path| {
+        let file = File::open(symbfile_path).expect("Failed to open symbfile");
+        let mut reader = Reader::new(file).expect("Failed to create symbfile reader");
+
+        while let Some(record) = reader.next().expect("Error reading record from symbfile") {
+            match record {
+                Record::Range(ref range) => {
+                    range_recs.push(record);
+                }
+                Record::ReturnPad(ref pad) => {
+                    // Handle ReturnPad if needed
+                    range_recs.push(record);
+                }
+            }
+        }
+    });
+    range_recs
+}
+
+
 // 1780-2000, 2004-2044,2044-2144, 2076-2096,
 /// Parse the profile file.
 fn parse_profile(profile_path: &str) -> Profile {
@@ -142,8 +164,8 @@ fn get_return_pad_vec(exec_path: &str, range_symbfile: &str) -> Vec<ReturnPad> {
     records
 }
 
-fn symbolize_request(req_path: &str, symbfile_path: &str, pads_option : Option<&Vec<ReturnPad>>, pid_filter: ::std::option::Option<i64>) {
-    let address_to_symbol = parse_symbfile(symbfile_path);
+fn symbolize_request(req_path: &str, symbfile_path: Vec<&str>, pads_option : Option<&Vec<ReturnPad>>, pid_filter: ::std::option::Option<i64>) {
+    let range_vec = parse_symbfile_to_vec(symbfile_path);
 
     let req_files = std::fs::read_dir(req_path).expect(&format!("failed to read request directory {}",req_path))
         .filter_map(|entry| entry.ok())
@@ -157,7 +179,7 @@ fn symbolize_request(req_path: &str, symbfile_path: &str, pads_option : Option<&
         for res in req.resource_profiles{
             for scop in res.scope_profiles{
                 for prof in scop.profiles{
-                    symbolize_profile(&prof, &address_to_symbol, pads_option, pid_filter);
+                    symbolize_profile(&prof, &range_vec, pads_option, pid_filter);
                 }
             }
         }
@@ -168,29 +190,9 @@ fn symbolize_request(req_path: &str, symbfile_path: &str, pads_option : Option<&
 
 /// Perform symbolization of the profile using the address-to-symbol mapping.
 // Perform symbolization of the profile using the address-to-symbol mapping.
-fn symbolize_profile(profile: &Profile, address_to_symbol: &HashMap<u64, Record>, pads_option: Option<&Vec<ReturnPad>>, pid_filter: ::std::option::Option<i64>) {
-    // for x in &profile.mapping_table{
-    //     // if (x.has_filenames) {
-    //     //     println!("Filename: {:?}", (x.filename));
-    //     // }
-    //     // if (x.build_id != 0) {
-    //     //     println!("Build ID: {:?}", (x.build_id));
-    //     // }
-    //
-    // }
-    //GO COde for finding the filename
-    // for mi := 0; mi < profi.MappingTable().Len(); mi++ {
-    //     mapping := profi.MappingTable().At(mi)
-    //     filename := profi.StringTable().At(int(mapping.FilenameStrindex()))
-    //     //gnuBuildID := profi.AttributeTable().At(mapping.AttributeIndices())//, "process.executable.build_id.gnu")
-    //     println(filename)
-    //     if strings.Contains(filename, "hello") {
-    //         println("found profile for hello world ukremer. Id is:")
-    ///ENd GO code
+fn symbolize_profile(profile: &Profile, range_rec: &Vec<Record>, pads_option: Option<&Vec<ReturnPad>>, pid_filter: ::std::option::Option<i64>) {
 
-
-
-
+    // Iterate over each sample in the profile
     for sample in &profile.sample{
         //println!("Sample: {:?}", sample);
         //find the mapping for the sample size=11
@@ -198,6 +200,7 @@ fn symbolize_profile(profile: &Profile, address_to_symbol: &HashMap<u64, Record>
         let attributes: Vec<_> = sample.attribute_indices.iter()
             .filter_map(|&index| profile.attribute_table.get(index as usize))
             .collect();
+        //Init pid and executable path
         let mut pid = 0;
         let mut executable_path = "";
         for attr in &attributes {
@@ -261,66 +264,54 @@ fn symbolize_profile(profile: &Profile, address_to_symbol: &HashMap<u64, Record>
         //
         // Process each location in the resolved slice
         for location in locations {
+            let locc = location.clone();
             let mut address = location.address;
+            let mut addMinus = location.address;
             // Adjust the address using MappingTable
             let mut filename = "";
+            let mut buildid = "";
             if let Some(mapping) = profile.mapping_table.get(location.mapping_index.unwrap() as usize) {
                 address += mapping.memory_start;
                 address += mapping.file_offset;
                 filename = profile.string_table.index(mapping.filename_strindex as usize);
                 println!("Filename: {:?}", filename);
-                if (filename=="libc.so.6"){
-                    println!("found libc.so.6");
+                addMinus = address - mapping.memory_start - mapping.file_offset;
 
-                }
             }else {
                 continue;
             }
-            if (address < 4000)
-            {
-                println!("CHecking address: {:?}", address);
-            }
 
-            for (start, record) in address_to_symbol.iter() {
+            println!("CHecking address: {:?}", address);
+
+            if !filename.contains("hello"){
+               continue;
+            }
+            for (record) in range_rec.iter() {
                 if let Record::Range(range) = record {
+                    let rrange = range.clone();
                     if address >= range.elf_va && address < range.elf_va + range.length as u64{
                         println!("found address!!!");
-                        let add = range.line_number_for_va(address);
+                        println!("Rrange: {:?} ", rrange);
+                        let line = range.line_number_for_va(address);
                         println!("Address: 0x{:x}, Function: {}, File: {:?}, Line: {:?}",
                                  address,
                                  range.func,
                                  range.file,
-                                 add
+                                 line
                         );
-                        // if let Some(line_number) = range.line_number_for_va(address) {
-                        //     println!(
-                        //         "Address: 0x{:x}, Function: {}, File: {:?}, Line: {}",
-                        //         address, range.func, range.file, line_number
-                        //     );
-                        // }
-
-
-                        let ln = range.line_number_for_va(address);
-                        eprintln!("Line number: {:?}", ln);
-                        println!("Sample ukremer found: {:?}", sample);
-                        // io::stdout().flush().unwrap();
-                        // io::stderr().flush().unwrap();
-                        // break;
                     }
                 }
             }
-            if (address == 2091 || address == 2127){
-                println!("found address of foo!!!");
-            }
+
             if let Some(pads) = pads_option{
                 for pad in pads{
                     let pp = &pad;
-                    println!("pp: {:?}", pp);
+                    //println!("pp: {:?}", pp);
                     if address == pad.elf_va{
                         println!("found pad for address{}",address);
                         for x in pad.entries.iter() {
                             let f = &x.func;
-                            println!("Func: {:?}", f);
+                            println!("pad Func: {:?}", f);
                             let n = &x;
                             println!("Pad: {:?}", n);
 
@@ -361,7 +352,8 @@ mod tests {
 
         // Step 2: Parse the profile
         // Step 2: Parse each profile in the profiles folder
-        symbolize_request(req_path, symbfile_path, None, None);
+        let symbfile_path_vec = vec![symbfile_path];
+        symbolize_request(req_path, symbfile_path_vec, None, None);
     }
 
     #[test]
@@ -410,21 +402,24 @@ mod tests {
         let profile = parse_profile(profile_path);
 
         // Step 3: Perform symbolization
-        symbolize_profile(&profile, &address_to_symbol, None, None);
+        let sym_vec = vec![symbfile_path];
+        symbolize_profile(&profile, &parse_symbfile_to_vec(sym_vec), None, None);
     }
     fn symbolize_profile_test(profile_path: &str, address_to_symbol: &HashMap<u64, Record>) {
         let symbfile_path = "/home/ubuntu/git/opentelemetry-ebpf-profiler/rust-crates/symblib-capi/output.symbfile";
         let profile_path = "/home/ubuntu/git/opentelemetry-ebpf-profiler/profile.proto";
 
         // Step 1: Parse the symbfile
-        let address_to_symbol = parse_symbfile(symbfile_path);
+        // let address_to_symbol = parse_symbfile(symbfile_path);
 
 
         // Step 2: Parse the profile
         let profile = parse_profile(profile_path);
 
         // Step 3: Perform symbolization
-        symbolize_profile(&profile, &address_to_symbol, None, None);
+        let sym_vec = vec![symbfile_path];
+
+        symbolize_profile(&profile, &parse_symbfile_to_vec(sym_vec) , None, None);
     }
 
     #[test]
@@ -435,7 +430,10 @@ mod tests {
             get_return_pad_vec("/home/ubuntu/git/opentelemetry-ebpf-profiler/rust-crates/test/hello_mul_only_inline",
                                "/home/ubuntu/git/opentelemetry-ebpf-profiler/rust-crates/symblib-capi/output_mul_only_inline.symbfile",
             );
-        symbolize_request(req_folder, sym_path, Some(&rec_vec), Some(1177588));
+
+        let sym_vec = vec![sym_path];
+
+        symbolize_request(req_folder, sym_vec, Some(&rec_vec), Some(1177588));
     }
     #[test]
     fn test_file_with_extern_libs(){
@@ -446,7 +444,8 @@ mod tests {
             get_return_pad_vec("/home/ubuntu/git/opentelemetry-ebpf-profiler/rust-crates/test/hello_with_libs",
                                sym_path,
             );
-        symbolize_request(req_folder, sym_path, Some(&rec_vec), None);
+        let sym_vec = vec![sym_path];
+        symbolize_request(req_folder, sym_vec, Some(&rec_vec), None);
     }
 
     #[test]
@@ -458,7 +457,31 @@ mod tests {
             get_return_pad_vec("/home/ubuntu/.cache/debuginfod_client/e1ccd314d3d3e596c8d9b70001c917e9c5292c33/debuginfo",
                                sym_path,
             );
-        symbolize_request(req_folder, sym_path, Some(&rec_vec), None);
+        let sym_vec = vec![sym_path];
+
+        symbolize_request(req_folder, sym_vec, Some(&rec_vec), None);
+    }
+
+    #[test]
+    fn test_file_with_extern_libs_inline_stl(){
+        let lib_sym_path = "/home/ubuntu/git/opentelemetry-ebpf-profiler/rust-crates/test_data/req_with_lib/libcrypto2.symbfile";
+        let exec_sym_path = "/home/ubuntu/git/opentelemetry-ebpf-profiler/rust-crates/test_data/req6_with_lib_and_inline/hello2_with_libs_stk_in.symbfile";
+        let req_folder =    "/home/ubuntu/git/opentelemetry-ebpf-profiler/rust-crates/test_data/req6_with_lib_and_inline/profiles";
+        let exec_path = "/home/ubuntu/git/opentelemetry-ebpf-profiler/rust-crates/test/hello2_with_libs_stk_inline";
+
+        let sym_vec = vec![ exec_sym_path, lib_sym_path];//lib_sym_path,
+        let pad_vec_exec =
+            get_return_pad_vec(
+                               exec_path,
+                               exec_sym_path
+            );
+
+
+        let rec_vec =
+            get_return_pad_vec("/home/ubuntu/.cache/debuginfod_client/e1ccd314d3d3e596c8d9b70001c917e9c5292c33/debuginfo",
+                               lib_sym_path,
+            );
+        symbolize_request(req_folder, sym_vec, Some(&rec_vec), Some(1804951));
     }
 
 

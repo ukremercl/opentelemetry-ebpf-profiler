@@ -207,7 +207,7 @@ func (r *OTLPReporter) reportOTLPProfile(ctx context.Context) error {
 						if err != nil {
 							return fmt.Errorf("failed to write profile to file: %w", err)
 						}
-						if err := os.WriteFile(fmt.Sprintf("rust-crates/test_data/req_with_lib/req5_with_lib_and_inline%d.proto", time.Now().Unix()), data, 0644); err != nil {
+						if err := os.WriteFile(fmt.Sprintf("rust-crates/test_data/req6_with_lib_and_inline/profiles/req6_with_lib_and_inline%d.pb", time.Now().Unix()), data, 0644); err != nil {
 							return fmt.Errorf("failed to write request to file: %w", err)
 						}
 

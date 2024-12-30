@@ -141,13 +141,15 @@ fn parse_prequest(req_path: &str) ->ExportProfilesServiceRequest {
 }
 
 fn get_return_pad_vec(exec_path: &str, range_symbfile: &str) -> Vec<ReturnPad> {
+    println!("Exec path: {:?}, range symbfile: {:?}", exec_path, range_symbfile);
     // let exec_path = testdata("inline-no-tco");
     // let range_symbfile = File::open(testdata("inline-no-tco.ranges.symbfile")).unwrap();
     let mut retpad_symbfile = tempfile::tempfile().unwrap();
     let rng_file = File::open(range_symbfile).expect("Failed to open range symbfile");
 
 
-    create_retpad_symbfile(Path::new(&exec_path), rng_file, &mut retpad_symbfile).unwrap();
+    let res = create_retpad_symbfile(Path::new(&exec_path), rng_file, &mut retpad_symbfile).unwrap();
+    println!("create_retpad_symbfile res:{:?}",res);
     retpad_symbfile.seek(SeekFrom::Start(0)).unwrap();
 
     let mut reader = symbfile::Reader::new(retpad_symbfile).unwrap();
@@ -260,6 +262,8 @@ fn symbolize_profile(profile: &Profile, range_rec: &Vec<Record>, pads_option: Op
             .location_table
             .get(start_index..start_index + length)
             .unwrap_or(&[]);
+        let mut loc_ranges = Vec::<Range>::new();
+        let mut loc_pads = Vec::<ReturnPad>::new();
 
         //
         // Process each location in the resolved slice
@@ -281,17 +285,20 @@ fn symbolize_profile(profile: &Profile, range_rec: &Vec<Record>, pads_option: Op
                 continue;
             }
 
-            println!("CHecking address: {:?}", address);
-
-            if !filename.contains("hello"){
-               continue;
+            println!("Checking address: {:?}", address);
+            if (address == 1973703){
+                println!("in crypto");
             }
+            // if !filename.contains("hello"){
+            //    continue;
+            // }
             for (record) in range_rec.iter() {
                 if let Record::Range(range) = record {
                     let rrange = range.clone();
                     if address >= range.elf_va && address < range.elf_va + range.length as u64{
                         println!("found address!!!");
                         println!("Rrange: {:?} ", rrange);
+                        loc_ranges.push(rrange);
                         let line = range.line_number_for_va(address);
                         println!("Address: 0x{:x}, Function: {}, File: {:?}, Line: {:?}",
                                  address,
@@ -309,6 +316,7 @@ fn symbolize_profile(profile: &Profile, range_rec: &Vec<Record>, pads_option: Op
                     //println!("pp: {:?}", pp);
                     if address == pad.elf_va{
                         println!("found pad for address{}",address);
+                        loc_pads.push(pad.clone());
                         for x in pad.entries.iter() {
                             let f = &x.func;
                             println!("pad Func: {:?}", f);
@@ -337,6 +345,14 @@ fn symbolize_profile(profile: &Profile, range_rec: &Vec<Record>, pads_option: Op
             //     println!("  Address: 0x{:x}, Symbol: <unknown>", address);
             // }
         }
+        //println!("location Ranges: {:?}", loc_ranges);
+        //println!("Location Pads: {:?}", loc_pads);
+        println!("Printing location pads");
+        for lp in loc_pads {
+            println!("Loc EntryPad{:?}", lp);
+        }
+        println!("finished printing location pads");
+
     }
 }
 
@@ -463,35 +479,72 @@ mod tests {
     }
 
     #[test]
-    fn test_file_with_extern_libs_inline_stl(){
-        let lib_sym_path = "/home/ubuntu/git/opentelemetry-ebpf-profiler/rust-crates/test_data/req_with_lib/libcrypto2.symbfile";
+    fn test_file_with_extern_libs_inline_stk(){
+        let lib_sym_path = "/home/ubuntu/git/opentelemetry-ebpf-profiler/rust-crates/test_data/libcrypto.symbfile";
+        //"/home/ubuntu/git/opentelemetry-ebpf-profiler/rust-crates/test_data/req_with_lib/libzstd.symbfile";//
+        let lib_exec = "/lib/aarch64-linux-gnu/libcrypto.so.3";
+        //"/home/ubuntu/git/opentelemetry-ebpf-profiler/rust-crates/test/hello2_with_libs_stk_inline";//"/lib/aarch64-linux-gnu/libzstd.so.1";//"/home/ubuntu/.cache/debuginfod_client/e0f73540861c62f788f8079ddecfff784543ca5e/debuginfo";//"/home/ubuntu/.cache/debuginfod_client/e1ccd314d3d3e596c8d9b70001c917e9c5292c33/debuginfo";
+        let lib_pads =
+            get_return_pad_vec(lib_exec,
+                               lib_sym_path
+            );
+
+
+        // for x in &lib_pads{
+        //     println!("{:?}", x);
+        // }
+
+
+
         let exec_sym_path = "/home/ubuntu/git/opentelemetry-ebpf-profiler/rust-crates/test_data/req6_with_lib_and_inline/hello2_with_libs_stk_in.symbfile";
         let req_folder =    "/home/ubuntu/git/opentelemetry-ebpf-profiler/rust-crates/test_data/req6_with_lib_and_inline/profiles";
         let exec_path = "/home/ubuntu/git/opentelemetry-ebpf-profiler/rust-crates/test/hello2_with_libs_stk_inline";
 
-        let sym_vec = vec![ exec_sym_path, lib_sym_path];//lib_sym_path,
-        let pad_vec_exec =
+        let sym_range_vec = vec![exec_sym_path, lib_sym_path];//lib_sym_path,
+
+        // for x in &pads{
+        //     println!("{:?}", x);
+        // }
+
+
+        let mut pads =
             get_return_pad_vec(
-                               exec_path,
-                               exec_sym_path
+                exec_path,
+                exec_sym_path
             );
 
-
-        let rec_vec =
-            get_return_pad_vec("/home/ubuntu/.cache/debuginfod_client/e1ccd314d3d3e596c8d9b70001c917e9c5292c33/debuginfo",
-                               lib_sym_path,
-            );
-        symbolize_request(req_folder, sym_vec, Some(&rec_vec), Some(1804951));
+        pads.extend(lib_pads);
+        // for x in &pads{
+        //     println!("{:?}", x);
+        // }
+        symbolize_request(req_folder, sym_range_vec, Some(&pads), Some(1804951));
     }
 
 
     #[test]
     fn test_parse_pads(){
-        let rec_vec =
-            get_return_pad_vec("/home/ubuntu/git/opentelemetry-ebpf-profiler/rust-crates/test/hello_mul_only_inline",
-            "/home/ubuntu/git/opentelemetry-ebpf-profiler/rust-crates/symblib-capi/output_mul_only_inline.symbfile",
-        );
-        for x in rec_vec{
+        // let rec_vec =
+        //     get_return_pad_vec("/home/ubuntu/git/opentelemetry-ebpf-profiler/rust-crates/test/hello4_with_stk_inline",
+        //     "/home/ubuntu/git/opentelemetry-ebpf-profiler/rust-crates/test_data/req7_with_lib_and_inline/hello4_with_stk_in.symbfile",
+        // );
+
+        // let rec_vec =
+        //     get_return_pad_vec("/home/ubuntu/git/opentelemetry-ebpf-profiler/rust-crates/test/hello2_with_libs_stk_inline",
+        //                        "/home/ubuntu/git/opentelemetry-ebpf-profiler/rust-crates/test_data/req6_with_lib_and_inline/hello2_with_libs_stk_in.symbfile",
+        //     );
+
+
+        let lib_sym_path = "/home/ubuntu/git/opentelemetry-ebpf-profiler/rust-crates/test_data/libcrypto.symbfile";
+        //"/home/ubuntu/git/opentelemetry-ebpf-profiler/rust-crates/test_data/req_with_lib/libzstd.symbfile";//
+        let lib_exec = "/lib/aarch64-linux-gnu/libcrypto.so.3";
+        //"/home/ubuntu/git/opentelemetry-ebpf-profiler/rust-crates/test/hello2_with_libs_stk_inline";//"/lib/aarch64-linux-gnu/libzstd.so.1";//"/home/ubuntu/.cache/debuginfod_client/e0f73540861c62f788f8079ddecfff784543ca5e/debuginfo";//"/home/ubuntu/.cache/debuginfod_client/e1ccd314d3d3e596c8d9b70001c917e9c5292c33/debuginfo";
+        let lib_pads =
+            get_return_pad_vec(lib_exec,
+                               lib_sym_path
+            );
+
+
+        for x in lib_pads{
             println!("{:?}", x);
         }
 

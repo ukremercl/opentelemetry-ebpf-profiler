@@ -84,7 +84,7 @@ unsafe fn rangeextr_impl(
         sc::obj::Extractor::new(&obj_reader, SymbolSource::Dynamic),
     );
 
-    let mut output_file = File::create("/home/ubuntu/git/opentelemetry-ebpf-profiler/rust-crates/test_data/req6_with_lib_and_inline/hello2_with_libs_stk_in.symbfile").unwrap();
+    let mut output_file = File::create("/home/ubuntu/git/opentelemetry-ebpf-profiler/rust-crates/test_data/libcrypto.symbfile").unwrap();
     // println!("Output file path: {:?}", std::env::current_dir().unwrap().join(output_file));
     // Extract ranges to symbfile
     match extr.extract_to_symbfile(&mut output_file) {
@@ -218,7 +218,10 @@ mod tests {
     #[test]
     fn rangeextr() {
         // let file = c"../symblib/testdata/inline";
-         let file = c"/home/ubuntu/git/opentelemetry-ebpf-profiler/rust-crates/test/hello2_with_libs_stk_inline";
+         let file = c"/home/ubuntu/.cache/debuginfod_client/e1ccd314d3d3e596c8d9b70001c917e9c5292c33/debuginfo";
+        // c"/home/ubuntu/.cache/debuginfod_client/e0f73540861c62f788f8079ddecfff784543ca5e/debuginfo";
+             //
+             //c"/home/ubuntu/git/opentelemetry-ebpf-profiler/rust-crates/test/hello2_with_libs_stk_inline";
         //c"/home/ubuntu/.cache/debuginfod_client/a9cb148add7e7ae0b58277e436dfcd4c86289e30/debuginfo";
         //c"/home/ubuntu/.cache/debuginfod_client/e1ccd314d3d3e596c8d9b70001c917e9c5292c33/debuginfo";
              //c"/home/ubuntu/git/opentelemetry-ebpf-profiler/rust-crates/test/hello_with_libs";
